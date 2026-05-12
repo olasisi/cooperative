@@ -27,7 +27,7 @@ export enum WalletEntryDirection {
   DEBIT = "DEBIT"
 }
 
-export type ApprovalRule = {
+export type NoSelfApprovalRule = {
   threshold: number;
   allowSelfApproval: false;
 };
