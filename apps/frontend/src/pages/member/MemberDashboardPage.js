@@ -1,2 +1,0 @@
-import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-export const MemberDashboardPage = () => (_jsxs("section", { children: [_jsx("h2", { children: "Member Dashboard" }), _jsxs("ul", { children: [_jsx("li", { children: "Wallet overview (read model from immutable ledger)" }), _jsx("li", { children: "Create request for contribution/withdrawal/loan actions" }), _jsx("li", { children: "Track request status through approval workflow" })] })] }));
