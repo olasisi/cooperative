@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 
+// Starter-only in-memory idempotency cache. Replace with Redis/DB for multi-instance deployments.
 const seenKeys = new Map<string, number>();
 const TEN_MINUTES_IN_MS = 10 * 60 * 1000;
 
