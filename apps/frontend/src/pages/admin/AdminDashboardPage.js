@@ -1,0 +1,2 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+export const AdminDashboardPage = () => (_jsxs("section", { children: [_jsx("h2", { children: "Admin Dashboard" }), _jsxs("ul", { children: [_jsx("li", { children: "Review and approve pending requests" }), _jsx("li", { children: "Enforce no self-approval and threshold-based approvals" }), _jsx("li", { children: "Audit trail and settings management" })] })] }));
