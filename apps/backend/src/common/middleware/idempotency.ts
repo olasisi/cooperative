@@ -18,7 +18,9 @@ export const idempotencyGuard = (req: Request, res: Response, next: NextFunction
   }
   const expiresAt = seenKeys.get(key);
   if (expiresAt && expiresAt > now) {
-    return res.status(409).json({ message: "Duplicate idempotent request key" });
+    return res.status(409).json({
+      message: "Duplicate request detected. This idempotency key was already used within the last 10 minutes"
+    });
   }
 
   seenKeys.set(key, now + TEN_MINUTES_IN_MS);

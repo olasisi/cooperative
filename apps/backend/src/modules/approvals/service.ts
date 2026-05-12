@@ -14,11 +14,13 @@ type ApprovalInput = {
 
 export const applyApproval = (request: RequestLike, input: ApprovalInput): RequestLike => {
   if (request.proposerUserId === input.reviewerUserId) {
-    throw new Error("No self-approval allowed");
+    throw new Error("Self-approval not allowed: reviewer and proposer cannot be the same user");
   }
 
   if (request.status !== RequestWorkflowStatus.REVIEWED && request.status !== RequestWorkflowStatus.PROPOSED) {
-    throw new Error("Request is not in an approvable state");
+    throw new Error(
+      `Request cannot be approved. Current status: ${request.status}. Expected: PROPOSED or REVIEWED`
+    );
   }
 
   const approvalsCount = request.approvalsCount + 1;

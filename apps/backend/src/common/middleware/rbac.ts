@@ -8,7 +8,9 @@ export const requireRole = (role: UserRole) => {
     const allowedRoles = roleHierarchy[role];
 
     if (!allowedRoles.includes(userRole)) {
-      return res.status(403).json({ message: "Forbidden" });
+      return res.status(403).json({
+        message: `Access denied. Required role: ${role}, current role: ${userRole}`
+      });
     }
 
     return next();
