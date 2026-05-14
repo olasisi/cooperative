@@ -99,19 +99,21 @@ export async function POST(req: NextRequest) {
 
       if (action === "APPROVE") {
         await prisma.$transaction(async (tx) => {
-          const updatedLoan = await tx.loanRequest.update({
+          await tx.loanRequest.update({
             where: { id: requestId },
             data: { status: "APPROVED", approvedById: adminId, approvedAt: new Date() },
           });
 
+          const walletRecord = await tx.wallet.findUnique({ where: { userId: loan.borrowerId } });
+          if (!walletRecord) throw new Error("Borrower wallet not found");
+
+          const balanceBefore = Number(walletRecord.totalBalance);
           const ref = generateReference("LOAN");
+
           await tx.wallet.update({
             where: { userId: loan.borrowerId },
             data: { totalBalance: { increment: loan.amount } },
           });
-
-          const walletRecord = await tx.wallet.findUnique({ where: { userId: loan.borrowerId } });
-          if (!walletRecord) throw new Error("Borrower wallet not found");
 
           await tx.transaction.create({
             data: {
@@ -119,8 +121,8 @@ export async function POST(req: NextRequest) {
               userId: loan.borrowerId,
               type: "LOAN_DISBURSEMENT",
               amount: loan.amount,
-              balanceBefore: 0,
-              balanceAfter: loan.amount,
+              balanceBefore,
+              balanceAfter: balanceBefore + Number(loan.amount),
               reference: ref,
               description: `Loan disbursement - ${loan.purpose}`,
               status: "COMPLETED",
