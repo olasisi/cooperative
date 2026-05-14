@@ -110,9 +110,12 @@ export async function POST(req: NextRequest) {
             data: { totalBalance: { increment: loan.amount } },
           });
 
+          const walletRecord = await tx.wallet.findUnique({ where: { userId: loan.borrowerId } });
+          if (!walletRecord) throw new Error("Borrower wallet not found");
+
           await tx.transaction.create({
             data: {
-              walletId: (await tx.wallet.findUnique({ where: { userId: loan.borrowerId } }))!.id,
+              walletId: walletRecord.id,
               userId: loan.borrowerId,
               type: "LOAN_DISBURSEMENT",
               amount: loan.amount,
