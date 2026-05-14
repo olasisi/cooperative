@@ -1,12 +1,12 @@
 # Cooperative Society Web Application
 
-A production-ready cooperative society management platform built with Next.js 14, TypeScript, Prisma ORM, and Paystack.
+A production-ready cooperative society management platform built with Next.js 15, TypeScript, Prisma ORM, and Paystack.
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Framework | Next.js 14 (App Router) |
+| Framework | Next.js 15 (App Router) |
 | Language | TypeScript |
 | Database | PostgreSQL (Railway) |
 | ORM | Prisma |
