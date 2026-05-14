@@ -29,7 +29,7 @@ const typeLabels: Record<TransactionType, string> = {
   WITHDRAWAL: "Withdrawal",
   LOAN_DISBURSEMENT: "Loan",
   LOAN_REPAYMENT: "Repayment",
-  DUES_DEDUCTION: "Dues",
+  DUES_PAYMENT: "Dues",
   ADJUSTMENT: "Adjustment",
   SURETY_LOCK: "Surety Lock",
   SURETY_RELEASE: "Surety Release",

@@ -196,7 +196,7 @@ export async function POST(req: NextRequest) {
             data: {
               walletId: wallet.id,
               userId: dues.userId,
-              type: "DUES_DEDUCTION",
+              type: "DUES_PAYMENT",
               amount: dues.amount,
               balanceBefore: wallet.totalBalance,
               balanceAfter: Number(wallet.totalBalance) + Number(dues.amount),

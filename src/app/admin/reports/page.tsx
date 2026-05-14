@@ -24,7 +24,7 @@ export default async function AdminReportsPage() {
       _sum: { amount: true },
     }),
     prisma.transaction.aggregate({
-      where: { type: "DUES_DEDUCTION", status: "COMPLETED" },
+      where: { type: "DUES_PAYMENT", status: "COMPLETED" },
       _sum: { amount: true },
     }),
     prisma.user.count({ where: { role: "MEMBER" } }),

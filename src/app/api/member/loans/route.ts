@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
           create: {
             suretyId,
             borrowerId: userId,
-            amountToLock: amount * (settingsMap["suretyMultiplier"] ?? 2),
+            amountToLock: amount * suretyMultiplier,
             status: "PENDING",
           },
         },

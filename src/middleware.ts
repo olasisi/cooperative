@@ -22,7 +22,7 @@ export default auth((req) => {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (isAdminPage && userRole !== "ADMIN") {
+  if (isAdminPage && userRole !== "ADMIN" && userRole !== "SUPER_ADMIN") {
     return NextResponse.redirect(new URL("/dashboard", req.url));
   }
 

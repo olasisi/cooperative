@@ -53,7 +53,7 @@ export const duesPaymentSchema = z.object({
     .positive("Amount must be positive")
     .min(100, "Minimum dues amount is ₦100"),
   month: z.number().int().min(1).max(12),
-  year: z.number().int().min(2020),
+  year: z.number().int().min(new Date().getFullYear() - 5),
 });
 
 export const depositSchema = z.object({
