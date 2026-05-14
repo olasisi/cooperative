@@ -1,0 +1,279 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  MEMBER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum RequestStatus {
+  PROPOSED
+  REVIEWED
+  APPROVED
+  EXECUTED
+  REJECTED
+  CANCELLED
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  LOAN_DISBURSEMENT
+  LOAN_REPAYMENT
+  DUES_PAYMENT
+  SURETY_LOCK
+  SURETY_RELEASE
+  ADJUSTMENT
+  REFUND
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum SuretyStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  ACTIVE
+  RELEASED
+}
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  password         String
+  role             Role      @default(MEMBER)
+  firstName        String
+  lastName         String
+  phoneNumber      String?
+  address          String?
+  nextOfKin        String?
+  nextOfKinPhone   String?
+  membershipNumber String?   @unique
+  membershipDate   DateTime  @default(now())
+  isActive         Boolean   @default(true)
+  isEmailVerified  Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  wallet             Wallet?
+  transactions       Transaction[]
+  loanRequests       LoanRequest[]       @relation("borrower")
+  proposedLoans      LoanRequest[]       @relation("proposer")
+  reviewedLoans      LoanRequest[]       @relation("reviewer")
+  approvedLoans      LoanRequest[]       @relation("approver")
+  executedLoans      LoanRequest[]       @relation("executor")
+  suretyGiven        SuretyRequest[]     @relation("surety")
+  suretyBorrower     SuretyRequest[]     @relation("borrowerSurety")
+  withdrawalRequests WithdrawalRequest[]
+  duesRequests       DuesRequest[]
+  approvalActions    ApprovalAction[]
+  auditLogs          AuditLog[]
+  notifications      Notification[]
+  settingsUpdated    Settings[]
+}
+
+model Wallet {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id])
+  totalBalance  Decimal  @default(0) @db.Decimal(15, 2)
+  lockedBalance Decimal  @default(0) @db.Decimal(15, 2)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  transactions Transaction[]
+}
+
+model Transaction {
+  id            String            @id @default(cuid())
+  walletId      String
+  wallet        Wallet            @relation(fields: [walletId], references: [id])
+  userId        String
+  user          User              @relation(fields: [userId], references: [id])
+  type          TransactionType
+  amount        Decimal           @db.Decimal(15, 2)
+  balanceBefore Decimal           @db.Decimal(15, 2)
+  balanceAfter  Decimal           @db.Decimal(15, 2)
+  reference     String            @unique
+  description   String?
+  status        TransactionStatus @default(PENDING)
+  requestId     String?
+  requestType   String?
+  paystackRef   String?
+  createdAt     DateTime          @default(now())
+
+  loanRepayments LoanRepayment[]
+}
+
+model LoanRequest {
+  id               String        @id @default(cuid())
+  borrowerId       String
+  borrower         User          @relation("borrower", fields: [borrowerId], references: [id])
+  amount           Decimal       @db.Decimal(15, 2)
+  purpose          String
+  tenure           Int
+  interestRate     Decimal       @default(5) @db.Decimal(5, 2)
+  totalRepayable   Decimal?      @db.Decimal(15, 2)
+  monthlyRepayment Decimal?      @db.Decimal(15, 2)
+  status           RequestStatus @default(PROPOSED)
+  proposedById     String?
+  proposedBy       User?         @relation("proposer", fields: [proposedById], references: [id])
+  reviewedById     String?
+  reviewedBy       User?         @relation("reviewer", fields: [reviewedById], references: [id])
+  approvedById     String?
+  approvedBy       User?         @relation("approver", fields: [approvedById], references: [id])
+  executedById     String?
+  executedBy       User?         @relation("executor", fields: [executedById], references: [id])
+  reviewedAt       DateTime?
+  approvedAt       DateTime?
+  executedAt       DateTime?
+  disbursedAt      DateTime?
+  dueDate          DateTime?
+  rejectedAt       DateTime?
+  rejectionReason  String?
+  isRepaid         Boolean       @default(false)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  suretyRequests SuretyRequest[]
+  repayments     LoanRepayment[]
+}
+
+model LoanRepayment {
+  id            String      @id @default(cuid())
+  loanId        String
+  loan          LoanRequest @relation(fields: [loanId], references: [id])
+  amount        Decimal     @db.Decimal(15, 2)
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  paidAt        DateTime    @default(now())
+}
+
+model SuretyRequest {
+  id            String       @id @default(cuid())
+  loanRequestId String
+  loanRequest   LoanRequest  @relation(fields: [loanRequestId], references: [id])
+  suretyId      String
+  surety        User         @relation("surety", fields: [suretyId], references: [id])
+  borrowerId    String
+  borrower      User         @relation("borrowerSurety", fields: [borrowerId], references: [id])
+  amountToLock  Decimal      @db.Decimal(15, 2)
+  status        SuretyStatus @default(PENDING)
+  requestedAt   DateTime     @default(now())
+  respondedAt   DateTime?
+  lockedAt      DateTime?
+  releasedAt    DateTime?
+}
+
+model WithdrawalRequest {
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  amount          Decimal       @db.Decimal(15, 2)
+  reason          String?
+  bankName        String?
+  accountNumber   String?
+  accountName     String?
+  status          RequestStatus @default(PROPOSED)
+  proposedById    String?
+  reviewedById    String?
+  approvedById    String?
+  executedById    String?
+  reviewedAt      DateTime?
+  approvedAt      DateTime?
+  executedAt      DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model DuesRequest {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id])
+  amount       Decimal       @db.Decimal(15, 2)
+  month        Int
+  year         Int
+  status       RequestStatus @default(PROPOSED)
+  proposedById String?
+  approvedById String?
+  executedAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([userId, month, year])
+}
+
+model AdjustmentRequest {
+  id           String        @id @default(cuid())
+  userId       String
+  amount       Decimal       @db.Decimal(15, 2)
+  type         String
+  reason       String
+  status       RequestStatus @default(PROPOSED)
+  proposedById String?
+  approvedById String?
+  executedAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model ApprovalAction {
+  id          String   @id @default(cuid())
+  requestId   String
+  requestType String
+  action      String
+  actorId     String
+  actor       User     @relation(fields: [actorId], references: [id])
+  comment     String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  actorId      String?
+  actor        User?    @relation(fields: [actorId], references: [id])
+  action       String
+  resourceType String
+  resourceId   String?
+  details      Json?
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String
+  message   String
+  type      String   @default("INFO")
+  isRead    Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+}
+
+model Settings {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String?
+  updatedById String?
+  updatedBy   User?    @relation(fields: [updatedById], references: [id])
+  updatedAt   DateTime @updatedAt
+}
