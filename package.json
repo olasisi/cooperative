@@ -1,0 +1,13 @@
+{
+  "name": "cooperative",
+  "version": "1.0.0",
+  "description": "online cooperative",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
