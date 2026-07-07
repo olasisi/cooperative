@@ -1,13 +1,26 @@
 {
   "name": "cooperative",
   "version": "1.0.0",
-  "description": "online cooperative",
-  "main": "index.js",
+  "description": "online cooperative - MVP scaffold",
+  "main": "src/server.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node index.js"
+    "dev": "nodemon --watch src --exec node src/server.js",
+    "start": "node src/server.js",
+    "prisma": "prisma"
   },
-  "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "bcrypt": "^5.1.0",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.0",
+    "prisma": "^5.6.0",
+    "@prisma/client": "^5.6.0",
+    "ioredis": "^5.3.2",
+    "bullmq": "^1.91.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
 }
