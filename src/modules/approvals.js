@@ -1,6 +1,7 @@
 const prisma = require('../lib/prisma');
 const { logAudit } = require('./audit');
 const { getApprovalThreshold } = require('./requests');
+const { Prisma } = require('@prisma/client');
 
 async function approveRequest({ approverId, requestId, note = null }) {
   // fetch request
@@ -64,6 +65,15 @@ async function approveRequest({ approverId, requestId, note = null }) {
           // missing execution details, still mark executed but audit the issue
           await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTION_SKIPPED', details: { requestId, reason: 'missing execution metadata' } } });
         } else {
+          // idempotency guard: if execution ledger entries already exist, treat as already executed and skip money ops
+          const existingExecution = await tx.ledgerEntry.findFirst({ where: { reference: requestId, type: 'EXECUTION_DEBIT' } });
+          if (existingExecution) {
+            await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTION_SKIPPED', details: { requestId, reason: 'already executed - existing ledger entries' } } });
+            // ensure request marked EXECUTED and return
+            await tx.request.update({ where: { id: requestId }, data: { status: 'EXECUTED' } });
+            return;
+          }
+
           // debit the sender atomically
           const debitRows = await tx.$queryRaw`
             UPDATE "Wallet" SET "available" = "available" - ${amount}
@@ -83,28 +93,37 @@ async function approveRequest({ approverId, requestId, note = null }) {
           const toUpdated = creditRows[0];
 
           // create paired ledger entries (double-entry)
-          await tx.ledgerEntry.createMany({ data: [
-            {
-              reference: requestId,
-              type: 'EXECUTION_DEBIT',
-              amount: amount,
-              currency: 'NGN',
-              debitUserId: from,
-              creditUserId: to,
-              beforeBalance: String(Number(fromUpdated.available) + Number(amount)),
-              afterBalance: String(fromUpdated.available),
-            },
-            {
-              reference: requestId,
-              type: 'EXECUTION_CREDIT',
-              amount: amount,
-              currency: 'NGN',
-              debitUserId: from,
-              creditUserId: to,
-              beforeBalance: String(Number(toUpdated.available) - Number(amount)),
-              afterBalance: String(toUpdated.available),
+          try {
+            await tx.ledgerEntry.createMany({ data: [
+              {
+                reference: requestId,
+                type: 'EXECUTION_DEBIT',
+                amount: amount,
+                currency: 'NGN',
+                debitUserId: from,
+                creditUserId: to,
+                beforeBalance: String(Number(fromUpdated.available) + Number(amount)),
+                afterBalance: String(fromUpdated.available),
+              },
+              {
+                reference: requestId,
+                type: 'EXECUTION_CREDIT',
+                amount: amount,
+                currency: 'NGN',
+                debitUserId: from,
+                creditUserId: to,
+                beforeBalance: String(Number(toUpdated.available) - Number(amount)),
+                afterBalance: String(toUpdated.available),
+              }
+            ]});
+          } catch (err) {
+            // handle unique constraint (duplicate ledger entries) gracefully as idempotent behaviour
+            if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+              await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTION_IDEMPOTENT', details: { requestId, reason: 'duplicate ledger entries detected' } } });
+            } else {
+              throw err;
             }
-          ]});
+          }
 
           await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTED', details: { requestId, from, to, amount } } });
         }
