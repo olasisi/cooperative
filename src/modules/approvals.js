@@ -21,13 +21,79 @@ async function approveRequest({ approverId, requestId, note = null }) {
   const count = await prisma.approval.count({ where: { requestId } });
   const threshold = await getApprovalThreshold();
   if (count >= threshold) {
-    // mark request APPROVED and then execute
-    await prisma.request.update({ where: { id: requestId }, data: { status: 'APPROVED', executedAt: new Date() } });
-    await logAudit('REQUEST_THRESHOLD_MET', null, { requestId, approvals: count, threshold });
+    // mark request APPROVED and then execute within a transaction so execution and ledger writes are atomic
+    await prisma.$transaction(async (tx) => {
+      await tx.request.update({ where: { id: requestId }, data: { status: 'APPROVED', executedAt: new Date() } });
+      await tx.auditLog.create({ data: { actionType: 'REQUEST_THRESHOLD_MET', details: { requestId, approvals: count, threshold } } });
 
-    // trigger execution hook - for now mark EXECUTED and audit (actual financial execution handled elsewhere)
-    await prisma.request.update({ where: { id: requestId }, data: { status: 'EXECUTED' } });
-    await logAudit('REQUEST_EXECUTED', null, { requestId });
+      // execute based on request metadata if present
+      let meta = req.metadata;
+      try {
+        if (meta && typeof meta === 'string') meta = JSON.parse(meta);
+      } catch (err) {
+        // leave meta as-is if parsing fails
+      }
+
+      if (meta && (meta.action === 'transfer' || meta.type === 'transfer')) {
+        const amount = String(meta.amount);
+        const from = meta.fromUserId || meta.debitUserId;
+        const to = meta.toUserId || meta.creditUserId;
+        if (!from || !to || !amount) {
+          // missing execution details, still mark executed but audit the issue
+          await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTION_SKIPPED', details: { requestId, reason: 'missing execution metadata' } } });
+        } else {
+          // debit the sender atomically
+          const debitRows = await tx.$queryRaw`
+            UPDATE "Wallet" SET "available" = "available" - ${amount}
+            WHERE "userId" = ${from} AND "available" >= ${amount}
+            RETURNING *;
+          `;
+          if (debitRows.length === 0) throw Object.assign(new Error('Insufficient funds for execution'), { status: 400 });
+          const fromUpdated = debitRows[0];
+
+          // credit the recipient
+          const creditRows = await tx.$queryRaw`
+            UPDATE "Wallet" SET "available" = "available" + ${amount}
+            WHERE "userId" = ${to}
+            RETURNING *;
+          `;
+          if (creditRows.length === 0) throw Object.assign(new Error('Recipient wallet not found'), { status: 404 });
+          const toUpdated = creditRows[0];
+
+          // create paired ledger entries (double-entry)
+          await tx.ledgerEntry.createMany({ data: [
+            {
+              reference: requestId,
+              type: 'EXECUTION_DEBIT',
+              amount: amount,
+              currency: 'NGN',
+              debitUserId: from,
+              creditUserId: to,
+              beforeBalance: String(Number(fromUpdated.available) + Number(amount)),
+              afterBalance: String(fromUpdated.available),
+            },
+            {
+              reference: requestId,
+              type: 'EXECUTION_CREDIT',
+              amount: amount,
+              currency: 'NGN',
+              debitUserId: from,
+              creditUserId: to,
+              beforeBalance: String(Number(toUpdated.available) - Number(amount)),
+              afterBalance: String(toUpdated.available),
+            }
+          ]});
+
+          await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTED', details: { requestId, from, to, amount } } });
+        }
+      } else {
+        // no executable metadata; just mark executed and audit
+        await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTED', details: { requestId, note: 'no execution metadata' } } });
+      }
+
+      // finally set status to EXECUTED
+      await tx.request.update({ where: { id: requestId }, data: { status: 'EXECUTED' } });
+    });
   }
 
   return approval;
