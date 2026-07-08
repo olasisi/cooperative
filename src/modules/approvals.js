@@ -21,13 +21,35 @@ async function approveRequest({ approverId, requestId, note = null }) {
   const count = await prisma.approval.count({ where: { requestId } });
   const threshold = await getApprovalThreshold();
   if (count >= threshold) {
-    // mark request APPROVED and then execute within a transaction so execution and ledger writes are atomic
+    // We must ensure only one concurrent caller performs execution.
+    // Acquire a row-lock on the request and re-check approval count/status inside a transaction.
     await prisma.$transaction(async (tx) => {
-      await tx.request.update({ where: { id: requestId }, data: { status: 'APPROVED', executedAt: new Date() } });
-      await tx.auditLog.create({ data: { actionType: 'REQUEST_THRESHOLD_MET', details: { requestId, approvals: count, threshold } } });
+      // lock the request row to make execution single-winner under concurrency
+      const lockedRows = await tx.$queryRaw`
+        SELECT * FROM "Request" WHERE id = ${requestId} FOR UPDATE
+      `;
+      const lockedReq = lockedRows[0];
+      if (!lockedReq) throw Object.assign(new Error('Request not found'), { status: 404 });
 
-      // execute based on request metadata if present
-      let meta = req.metadata;
+      // if status changed by another concurrent worker, abort execution path
+      if (lockedReq.status !== 'PENDING') {
+        return;
+      }
+
+      // re-count approvals inside transaction to avoid races
+      const txCountRes = await tx.approval.count({ where: { requestId } });
+      const txThreshold = await getApprovalThreshold();
+      if (txCountRes < txThreshold) {
+        // another concurrent process hasn't fully recorded approvals yet
+        return;
+      }
+
+      // mark request APPROVED and note execution time
+      await tx.request.update({ where: { id: requestId }, data: { status: 'APPROVED', executedAt: new Date() } });
+      await tx.auditLog.create({ data: { actionType: 'REQUEST_THRESHOLD_MET', details: { requestId, approvals: txCountRes, threshold: txThreshold } } });
+
+      // parse metadata from the locked request row
+      let meta = lockedReq.metadata;
       try {
         if (meta && typeof meta === 'string') meta = JSON.parse(meta);
       } catch (err) {
