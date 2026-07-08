@@ -40,7 +40,7 @@ test('concurrent approvals only execute once and respect threshold', async () =>
   const meta = { action: 'transfer', fromUserId: payer.id, toUserId: recipient.id, amount: '1000' };
   const req = await requests.createRequest({ proposerId: proposer.id, title: 'Concurrency transfer', description: 'transfer test', amount: '1000', metadata: meta });
 
-  // run approvals concurrently from three admins (one may be duplicate if same id used twice)
+  // run approvals concurrently from three admins
   const calls = [
     approvals.approveRequest({ approverId: admin1.id, requestId: req.id, note: 'concurrent-1' }),
     approvals.approveRequest({ approverId: admin2.id, requestId: req.id, note: 'concurrent-2' }),
@@ -49,21 +49,30 @@ test('concurrent approvals only execute once and respect threshold', async () =>
 
   const results = await Promise.allSettled(calls);
 
-  // ensure at least two approvals succeeded and request executed once
+  // ensure at least two approvals recorded
   const fulfilled = results.filter(r => r.status === 'fulfilled');
   expect(fulfilled.length).toBeGreaterThanOrEqual(2);
 
-  // reload request
-  const executed = await prisma.request.findUnique({ where: { id: req.id } });
-  expect(executed.status).toBe('EXECUTED');
+  // reload request and assert it was executed and marked idempotently
+  const executedReq = await prisma.request.findUnique({ where: { id: req.id } });
+  expect(executedReq.status).toBe('EXECUTED');
+  expect(executedReq.executed).toBe(true);
+  expect(executedReq.executedAt).toBeTruthy();
 
-  // confirm wallets reflect a single execution of 1000
+  // confirm wallets reflect a single execution of 1000 (exact balances)
   const payerBal = await wallet.getBalance(payer.id);
   const recipientBal = await wallet.getBalance(recipient.id);
-  expect(Number(payerBal.available)).toBeGreaterThanOrEqual(2000); // started 3000 -> debited 1000 => >=2000
-  expect(Number(recipientBal.available)).toBeGreaterThanOrEqual(1000);
+  expect(Number(payerBal.available)).toBe(2000); // started 3000 -> debited 1000 => 2000
+  expect(Number(recipientBal.available)).toBe(1000);
 
-  // ensure there are ledger entries for this request
+  // ensure there are exactly two ledger entries for this request (debit + credit)
   const ledgers = await prisma.ledgerEntry.findMany({ where: { reference: req.id } });
-  expect(ledgers.length).toBeGreaterThanOrEqual(2);
+  expect(ledgers.length).toBe(2);
+  const types = ledgers.map(l => l.type).sort();
+  expect(types).toEqual(['EXECUTION_CREDIT', 'EXECUTION_DEBIT'].sort());
+
+  // ensure exactly one REQUEST_EXECUTED audit entry for this request
+  const audits = await prisma.auditLog.findMany({ where: { actionType: 'REQUEST_EXECUTED' } });
+  const execAudits = audits.filter(a => a.details && a.details.requestId === req.id);
+  expect(execAudits.length).toBe(1);
 });
