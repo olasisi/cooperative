@@ -1,5 +1,5 @@
-// src/modules/wallet.js
 const prisma = require('../lib/prisma');
+const { logAudit } = require('./audit');
 
 // helper to create a paired ledger entry (debit and credit)
 async function createLedgerPair({ reference, type, amount, currency = 'NGN', debitUserId = null, creditUserId = null }) {
@@ -42,7 +42,7 @@ async function getBalance(userId) {
   return { available: wallet.available.toString(), locked: wallet.locked.toString() };
 }
 
-async function deposit({ userId, amount, reference = 'deposit', type = 'DEPOSIT' }) {
+async function deposit({ initiatorId = null, userId, amount, reference = 'deposit', type = 'DEPOSIT' }) {
   // increment available atomically
   const updated = await prisma.wallet.update({
     where: { userId },
@@ -61,10 +61,14 @@ async function deposit({ userId, amount, reference = 'deposit', type = 'DEPOSIT'
       afterBalance: String(updated.available),
     },
   });
+
+  // audit
+  await logAudit('WALLET_DEPOSIT', initiatorId, { userId, amount: String(amount), reference });
+
   return { available: updated.available.toString(), locked: updated.locked.toString() };
 }
 
-async function withdraw({ userId, amount, reference = 'withdraw', type = 'WITHDRAW' }) {
+async function withdraw({ initiatorId = null, userId, amount, reference = 'withdraw', type = 'WITHDRAW' }) {
   // atomic decrement if available >= amount using raw SQL for returning
   const rows = await prisma.$queryRaw`
     UPDATE "Wallet" SET "available" = "available" - ${String(amount)}
@@ -89,10 +93,14 @@ async function withdraw({ userId, amount, reference = 'withdraw', type = 'WITHDR
       afterBalance: String(updated.available),
     },
   });
+
+  // audit
+  await logAudit('WALLET_WITHDRAW', initiatorId, { userId, amount: String(amount), reference });
+
   return { available: String(updated.available), locked: String(updated.locked) };
 }
 
-async function lockFunds({ userId, amount, reference = 'lock', type = 'LOCK' }) {
+async function lockFunds({ initiatorId = null, userId, amount, reference = 'lock', type = 'LOCK' }) {
   // move available -> locked atomically
   const rows = await prisma.$queryRaw`
     UPDATE "Wallet" SET "available" = "available" - ${String(amount)}, "locked" = "locked" + ${String(amount)}
@@ -115,10 +123,14 @@ async function lockFunds({ userId, amount, reference = 'lock', type = 'LOCK' }) 
       afterBalance: String(updated.available),
     },
   });
+
+  // audit
+  await logAudit('WALLET_LOCK', initiatorId, { userId, amount: String(amount), reference });
+
   return { available: String(updated.available), locked: String(updated.locked) };
 }
 
-async function unlockFunds({ userId, amount, reference = 'unlock', type = 'UNLOCK' }) {
+async function unlockFunds({ initiatorId = null, userId, amount, reference = 'unlock', type = 'UNLOCK' }) {
   // move locked -> available atomically
   const rows = await prisma.$queryRaw`
     UPDATE "Wallet" SET "locked" = "locked" - ${String(amount)}, "available" = "available" + ${String(amount)}
@@ -141,6 +153,10 @@ async function unlockFunds({ userId, amount, reference = 'unlock', type = 'UNLOC
       afterBalance: String(updated.available),
     },
   });
+
+  // audit
+  await logAudit('WALLET_UNLOCK', initiatorId, { userId, amount: String(amount), reference });
+
   return { available: String(updated.available), locked: String(updated.locked) };
 }
 
