@@ -57,6 +57,8 @@ model LedgerEntry {
   beforeBalance Decimal
   afterBalance  Decimal
   createdAt     DateTime @default(now())
+
+  @@unique([reference, type], name: "unique_reference_type")
 }
 
 model Request {
