@@ -69,6 +69,7 @@ model Request {
   proposerId    String
   proposer      User          @relation("proposer", fields: [proposerId], references: [id])
   status        RequestStatus @default(PENDING)
+  executed      Boolean       @default(false)
   approvals     Approval[]
   createdAt     DateTime      @default(now())
   executedAt    DateTime?
