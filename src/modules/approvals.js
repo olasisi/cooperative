@@ -22,8 +22,7 @@ async function approveRequest({ approverId, requestId, note = null }) {
   const count = await prisma.approval.count({ where: { requestId } });
   const threshold = await getApprovalThreshold();
   if (count >= threshold) {
-    // We must ensure only one concurrent caller performs execution.
-    // Acquire a row-lock on the request and re-check approval count/status inside a transaction.
+    // Acquire a row-lock on the request and re-check approval count/status/executed inside a transaction.
     await prisma.$transaction(async (tx) => {
       // lock the request row to make execution single-winner under concurrency
       const lockedRows = await tx.$queryRaw`
@@ -37,6 +36,13 @@ async function approveRequest({ approverId, requestId, note = null }) {
         return;
       }
 
+      // if already executed (idempotent), skip execution
+      if (lockedReq.executed) {
+        // ensure request marked EXECUTED and exit
+        await tx.request.update({ where: { id: requestId }, data: { status: 'EXECUTED' } });
+        return;
+      }
+
       // re-count approvals inside transaction to avoid races
       const txCountRes = await tx.approval.count({ where: { requestId } });
       const txThreshold = await getApprovalThreshold();
@@ -45,8 +51,8 @@ async function approveRequest({ approverId, requestId, note = null }) {
         return;
       }
 
-      // mark request APPROVED and note execution time
-      await tx.request.update({ where: { id: requestId }, data: { status: 'APPROVED', executedAt: new Date() } });
+      // mark request APPROVED
+      await tx.request.update({ where: { id: requestId }, data: { status: 'APPROVED' } });
       await tx.auditLog.create({ data: { actionType: 'REQUEST_THRESHOLD_MET', details: { requestId, approvals: txCountRes, threshold: txThreshold } } });
 
       // parse metadata from the locked request row
@@ -64,76 +70,81 @@ async function approveRequest({ approverId, requestId, note = null }) {
         if (!from || !to || !amount) {
           // missing execution details, still mark executed but audit the issue
           await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTION_SKIPPED', details: { requestId, reason: 'missing execution metadata' } } });
-        } else {
-          // idempotency guard: if execution ledger entries already exist, treat as already executed and skip money ops
-          const existingExecution = await tx.ledgerEntry.findFirst({ where: { reference: requestId, type: 'EXECUTION_DEBIT' } });
-          if (existingExecution) {
-            await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTION_SKIPPED', details: { requestId, reason: 'already executed - existing ledger entries' } } });
-            // ensure request marked EXECUTED and return
-            await tx.request.update({ where: { id: requestId }, data: { status: 'EXECUTED' } });
-            return;
-          }
-
-          // debit the sender atomically
-          const debitRows = await tx.$queryRaw`
-            UPDATE "Wallet" SET "available" = "available" - ${amount}
-            WHERE "userId" = ${from} AND "available" >= ${amount}
-            RETURNING *;
-          `;
-          if (debitRows.length === 0) throw Object.assign(new Error('Insufficient funds for execution'), { status: 400 });
-          const fromUpdated = debitRows[0];
-
-          // credit the recipient
-          const creditRows = await tx.$queryRaw`
-            UPDATE "Wallet" SET "available" = "available" + ${amount}
-            WHERE "userId" = ${to}
-            RETURNING *;
-          `;
-          if (creditRows.length === 0) throw Object.assign(new Error('Recipient wallet not found'), { status: 404 });
-          const toUpdated = creditRows[0];
-
-          // create paired ledger entries (double-entry)
-          try {
-            await tx.ledgerEntry.createMany({ data: [
-              {
-                reference: requestId,
-                type: 'EXECUTION_DEBIT',
-                amount: amount,
-                currency: 'NGN',
-                debitUserId: from,
-                creditUserId: to,
-                beforeBalance: String(Number(fromUpdated.available) + Number(amount)),
-                afterBalance: String(fromUpdated.available),
-              },
-              {
-                reference: requestId,
-                type: 'EXECUTION_CREDIT',
-                amount: amount,
-                currency: 'NGN',
-                debitUserId: from,
-                creditUserId: to,
-                beforeBalance: String(Number(toUpdated.available) - Number(amount)),
-                afterBalance: String(toUpdated.available),
-              }
-            ]});
-          } catch (err) {
-            // handle unique constraint (duplicate ledger entries) gracefully as idempotent behaviour
-            if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-              await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTION_IDEMPOTENT', details: { requestId, reason: 'duplicate ledger entries detected' } } });
-            } else {
-              throw err;
-            }
-          }
-
-          await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTED', details: { requestId, from, to, amount } } });
+          await tx.request.update({ where: { id: requestId }, data: { status: 'EXECUTED', executed: true, executedAt: new Date() } });
+          return;
         }
+
+        // idempotency guard: if execution ledger entries already exist, treat as already executed and skip money ops
+        const existingExecution = await tx.ledgerEntry.findFirst({ where: { reference: requestId, type: 'EXECUTION_DEBIT' } });
+        if (existingExecution) {
+          await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTION_SKIPPED', details: { requestId, reason: 'already executed - existing ledger entries' } } });
+          await tx.request.update({ where: { id: requestId }, data: { status: 'EXECUTED', executed: true, executedAt: new Date() } });
+          return;
+        }
+
+        // debit the sender atomically
+        const debitRows = await tx.$queryRaw`
+          UPDATE "Wallet" SET "available" = "available" - ${amount}
+          WHERE "userId" = ${from} AND "available" >= ${amount}
+          RETURNING *;
+        `;
+        if (debitRows.length === 0) throw Object.assign(new Error('Insufficient funds for execution'), { status: 400 });
+        const fromUpdated = debitRows[0];
+
+        // credit the recipient
+        const creditRows = await tx.$queryRaw`
+          UPDATE "Wallet" SET "available" = "available" + ${amount}
+          WHERE "userId" = ${to}
+          RETURNING *;
+        `;
+        if (creditRows.length === 0) throw Object.assign(new Error('Recipient wallet not found'), { status: 404 });
+        const toUpdated = creditRows[0];
+
+        // create paired ledger entries (double-entry)
+        try {
+          await tx.ledgerEntry.createMany({ data: [
+            {
+              reference: requestId,
+              type: 'EXECUTION_DEBIT',
+              amount: amount,
+              currency: 'NGN',
+              debitUserId: from,
+              creditUserId: to,
+              beforeBalance: String(Number(fromUpdated.available) + Number(amount)),
+              afterBalance: String(fromUpdated.available),
+            },
+            {
+              reference: requestId,
+              type: 'EXECUTION_CREDIT',
+              amount: amount,
+              currency: 'NGN',
+              debitUserId: from,
+              creditUserId: to,
+              beforeBalance: String(Number(toUpdated.available) - Number(amount)),
+              afterBalance: String(toUpdated.available),
+            }
+          ]});
+        } catch (err) {
+          // handle unique constraint (duplicate ledger entries) gracefully as idempotent behaviour
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+            await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTION_IDEMPOTENT', details: { requestId, reason: 'duplicate ledger entries detected' } } });
+            // ensure executed flag set
+            await tx.request.update({ where: { id: requestId }, data: { status: 'EXECUTED', executed: true, executedAt: new Date() } });
+            return;
+          } else {
+            throw err;
+          }
+        }
+
+        // mark executed and executedAt inside transaction for idempotency
+        await tx.request.update({ where: { id: requestId }, data: { status: 'EXECUTED', executed: true, executedAt: new Date() } });
+
+        await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTED', details: { requestId, from, to, amount } } });
       } else {
         // no executable metadata; just mark executed and audit
         await tx.auditLog.create({ data: { actionType: 'REQUEST_EXECUTED', details: { requestId, note: 'no execution metadata' } } });
+        await tx.request.update({ where: { id: requestId }, data: { status: 'EXECUTED', executed: true, executedAt: new Date() } });
       }
-
-      // finally set status to EXECUTED
-      await tx.request.update({ where: { id: requestId }, data: { status: 'EXECUTED' } });
     });
   }
 
