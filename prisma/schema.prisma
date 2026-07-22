@@ -1,5 +1,5 @@
 // prisma/schema.prisma
-// Core schema for cooperative MVP
+// Core schema for cooperative platform
 
 generator client {
   provider = "prisma-client-js"
@@ -7,8 +7,9 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
+
+// ── Enums ──────────────────────────────────────────────────────────────────
 
 enum Role {
   MEMBER
@@ -17,37 +18,87 @@ enum Role {
 
 enum RequestStatus {
   PENDING
+  REVIEWED
   APPROVED
   REJECTED
   EXECUTED
 }
 
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+enum LoanStatus {
+  PENDING
+  ACTIVE
+  REPAID
+}
+
+// ── Tenant ─────────────────────────────────────────────────────────────────
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  users     User[]
+  requests  Request[]
+  loans     Loan[]
+  sureties  Surety[]
+  auditLogs AuditLog[]
+}
+
+// ── Auth ───────────────────────────────────────────────────────────────────
+
 model User {
-  id               String   @id @default(uuid())
-  email            String?  @unique
-  phone            String?  @unique
+  id               String    @id @default(uuid())
+  tenantId         String?
+  tenant           Tenant?   @relation(fields: [tenantId], references: [id])
+  email            String?   @unique
+  phone            String?   @unique
   fullName         String
   password         String
-  role             Role     @default(MEMBER)
-  isSuper          Boolean  @default(false)
+  role             Role      @default(MEMBER)
+  isSuper          Boolean   @default(false)
   membershipStart  DateTime?
-  createdAt        DateTime @default(now())
+  createdAt        DateTime  @default(now())
   wallet           Wallet?
   requestsProposed Request[] @relation("proposer")
   approvals        Approval[]
+  refreshTokens    RefreshToken[]
+  loans            Loan[]    @relation("borrower")
+  proposedLoans    Loan[]    @relation("loanProposer")
+  sureties         Surety[]
 }
 
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ── Wallet / Ledger ────────────────────────────────────────────────────────
+
 model Wallet {
-  id         String   @id @default(uuid())
-  userId     String   @unique
-  user       User     @relation(fields: [userId], references: [id])
-  available  Decimal  @default(0)
-  locked     Decimal  @default(0)
-  createdAt  DateTime @default(now())
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  available Decimal  @default(0)
+  locked    Decimal  @default(0)
+  createdAt DateTime @default(now())
 }
 
 model LedgerEntry {
   id            String   @id @default(uuid())
+  tenantId      String?
   reference     String
   type          String
   amount        Decimal
@@ -59,12 +110,21 @@ model LedgerEntry {
   createdAt     DateTime @default(now())
 
   @@unique([reference, type], name: "unique_reference_type")
+  @@index([debitUserId])
+  @@index([creditUserId])
 }
+
+// ── Requests / Approvals ───────────────────────────────────────────────────
 
 model Request {
   id            String        @id @default(uuid())
+  tenantId      String?
+  tenant        Tenant?       @relation(fields: [tenantId], references: [id])
   cooperativeId String?
-  type          String
+  type          String        @default("GENERAL")
+  title         String?
+  description   String?
+  amount        Decimal?
   metadata      Json?
   proposerId    String
   proposer      User          @relation("proposer", fields: [proposerId], references: [id])
@@ -76,46 +136,68 @@ model Request {
 }
 
 model Approval {
-  id         String   @id @default(uuid())
+  id         String           @id @default(uuid())
   requestId  String
-  request    Request  @relation(fields: [requestId], references: [id])
+  request    Request          @relation(fields: [requestId], references: [id])
   approverId String
-  approver   User     @relation(fields: [approverId], references: [id])
+  approver   User             @relation(fields: [approverId], references: [id])
+  decision   ApprovalDecision @default(APPROVED)
   note       String?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime         @default(now())
 }
 
+// ── Loans / Surety ─────────────────────────────────────────────────────────
+
 model Loan {
-  id             String   @id @default(uuid())
-  borrowerId     String
-  borrower       User     @relation(fields: [borrowerId], references: [id])
-  amount         Decimal
-  outstanding    Decimal
-  disbursedAt    DateTime?
-  repaidAt       DateTime?
-  createdAt      DateTime @default(now())
+  id          String     @id @default(uuid())
+  tenantId    String?
+  tenant      Tenant?    @relation(fields: [tenantId], references: [id])
+  proposerId  String?
+  proposer    User?      @relation("loanProposer", fields: [proposerId], references: [id])
+  borrowerId  String
+  borrower    User       @relation("borrower", fields: [borrowerId], references: [id])
+  amount      Decimal
+  outstanding Decimal
+  status      LoanStatus @default(PENDING)
+  disbursedAt DateTime?
+  repaidAt    DateTime?
+  createdAt   DateTime   @default(now())
+  sureties    Surety[]
 }
 
 model Surety {
-  id         String   @id @default(uuid())
+  id         String    @id @default(uuid())
+  tenantId   String?
+  tenant     Tenant?   @relation(fields: [tenantId], references: [id])
   loanId     String
+  loan       Loan      @relation(fields: [loanId], references: [id])
   userId     String
+  user       User      @relation(fields: [userId], references: [id])
   amount     Decimal
-  lockedAt   DateTime @default(now())
+  lockedAt   DateTime  @default(now())
   releasedAt DateTime?
 }
 
+// ── Audit ──────────────────────────────────────────────────────────────────
+
 model AuditLog {
   id          String   @id @default(uuid())
+  tenantId    String?
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id])
   actionType  String
   initiatorId String?
   details     Json
   createdAt   DateTime @default(now())
+
+  @@index([initiatorId])
+  @@index([actionType])
 }
 
+// ── Settings ───────────────────────────────────────────────────────────────
+
 model Setting {
-  id         String   @id @default(uuid())
-  key        String   @unique
-  value      String
-  createdAt  DateTime @default(now())
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
 }

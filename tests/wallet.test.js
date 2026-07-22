@@ -81,9 +81,9 @@ test('lock funds moves available to locked and prevents withdrawal of locked fun
 });
 
 test('concurrent withdraws cannot double-spend', async () => {
-  // reset wallet to 1000 available
-  // note: deposit will increment; for test simplicity deposit big amount
-  await wallet.deposit({ initiatorId: testUser.id, userId: testUser.id, amount: '1000', reference: 'test-concurrency' });
+  // Reset wallet to exactly 1000 available so that two concurrent withdrawals
+  // of 800 each cannot both succeed (only one can, since 1000 < 1600).
+  await prisma.wallet.update({ where: { userId: testUser.id }, data: { available: '1000', locked: '0' } });
 
   const withdrawAmount = '800';
   const attempts = [
@@ -95,7 +95,7 @@ test('concurrent withdraws cannot double-spend', async () => {
   const fulfilled = results.filter(r => r.status === 'fulfilled');
   const rejected = results.filter(r => r.status === 'rejected');
 
-  // only one should succeed
+  // only one should succeed because 1000 < 800 + 800
   expect(fulfilled.length).toBe(1);
   expect(rejected.length).toBe(1);
 });

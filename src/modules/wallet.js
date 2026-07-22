@@ -2,13 +2,32 @@ const prisma = require('../lib/prisma');
 const { logAudit } = require('./audit');
 
 // helper to create a paired ledger entry (debit and credit)
-async function createLedgerPair({ reference, type, amount, currency = 'NGN', debitUserId = null, creditUserId = null }) {
-  // amount should be a string or number
-  const beforeDebit = debitUserId ? await prisma.wallet.findUnique({ where: { userId: debitUserId } }) : null;
-  const beforeCredit = creditUserId ? await prisma.wallet.findUnique({ where: { userId: creditUserId } }) : null;
+// beforeDebitBalance and beforeCreditBalance should be snapshots taken BEFORE the wallet mutation.
+// If not provided, they fall back to the current wallet balance (which may already reflect the mutation).
+async function createLedgerPair({
+  reference,
+  type,
+  amount,
+  currency = 'NGN',
+  debitUserId = null,
+  creditUserId = null,
+  beforeDebitBalance = null,
+  beforeCreditBalance = null,
+}) {
+  const amt = Number(amount);
+
+  // read current wallet balances when before-snapshots are not supplied
+  const beforeDebit = beforeDebitBalance !== null
+    ? { available: beforeDebitBalance }
+    : (debitUserId ? await prisma.wallet.findUnique({ where: { userId: debitUserId } }) : null);
+
+  const beforeCredit = beforeCreditBalance !== null
+    ? { available: beforeCreditBalance }
+    : (creditUserId ? await prisma.wallet.findUnique({ where: { userId: creditUserId } }) : null);
 
   const entries = [];
-  if (debitUserId) {
+  if (debitUserId && beforeDebit) {
+    const before = Number(beforeDebit.available);
     entries.push({
       reference,
       type,
@@ -16,11 +35,12 @@ async function createLedgerPair({ reference, type, amount, currency = 'NGN', deb
       currency,
       debitUserId,
       creditUserId,
-      beforeBalance: beforeDebit ? String(beforeDebit.available) : '0',
-      afterBalance: beforeDebit ? String(beforeDebit.available) : '0',
+      beforeBalance: String(before),
+      afterBalance: String(before - amt),
     });
   }
-  if (creditUserId) {
+  if (creditUserId && beforeCredit) {
+    const before = Number(beforeCredit.available);
     entries.push({
       reference,
       type,
@@ -28,11 +48,10 @@ async function createLedgerPair({ reference, type, amount, currency = 'NGN', deb
       currency,
       debitUserId,
       creditUserId,
-      beforeBalance: beforeCredit ? String(beforeCredit.available) : '0',
-      afterBalance: beforeCredit ? String(beforeCredit.available) : '0',
+      beforeBalance: String(before),
+      afterBalance: String(before + amt),
     });
   }
-  // create entries
   return prisma.ledgerEntry.createMany({ data: entries });
 }
 
@@ -69,10 +88,11 @@ async function deposit({ initiatorId = null, userId, amount, reference = 'deposi
 }
 
 async function withdraw({ initiatorId = null, userId, amount, reference = 'withdraw', type = 'WITHDRAW' }) {
+  const amt = Number(amount);
   // atomic decrement if available >= amount using raw SQL for returning
   const rows = await prisma.$queryRaw`
-    UPDATE "Wallet" SET "available" = "available" - ${String(amount)}
-    WHERE "userId" = ${userId} AND "available" >= ${String(amount)}
+    UPDATE "Wallet" SET "available" = "available" - ${amt}::numeric
+    WHERE "userId" = ${userId} AND "available" >= ${amt}::numeric
     RETURNING *;
   `;
 
@@ -89,7 +109,7 @@ async function withdraw({ initiatorId = null, userId, amount, reference = 'withd
       currency: 'NGN',
       debitUserId: userId,
       creditUserId: null,
-      beforeBalance: String(Number(updated.available) + Number(amount)),
+      beforeBalance: String(Number(updated.available) + amt),
       afterBalance: String(updated.available),
     },
   });
@@ -101,10 +121,11 @@ async function withdraw({ initiatorId = null, userId, amount, reference = 'withd
 }
 
 async function lockFunds({ initiatorId = null, userId, amount, reference = 'lock', type = 'LOCK' }) {
+  const amt = Number(amount);
   // move available -> locked atomically
   const rows = await prisma.$queryRaw`
-    UPDATE "Wallet" SET "available" = "available" - ${String(amount)}, "locked" = "locked" + ${String(amount)}
-    WHERE "userId" = ${userId} AND "available" >= ${String(amount)}
+    UPDATE "Wallet" SET "available" = "available" - ${amt}::numeric, "locked" = "locked" + ${amt}::numeric
+    WHERE "userId" = ${userId} AND "available" >= ${amt}::numeric
     RETURNING *;
   `;
   if (rows.length === 0) {
@@ -119,7 +140,7 @@ async function lockFunds({ initiatorId = null, userId, amount, reference = 'lock
       currency: 'NGN',
       debitUserId: userId,
       creditUserId: null,
-      beforeBalance: String(Number(updated.available) + Number(amount)),
+      beforeBalance: String(Number(updated.available) + amt),
       afterBalance: String(updated.available),
     },
   });
@@ -131,10 +152,11 @@ async function lockFunds({ initiatorId = null, userId, amount, reference = 'lock
 }
 
 async function unlockFunds({ initiatorId = null, userId, amount, reference = 'unlock', type = 'UNLOCK' }) {
+  const amt = Number(amount);
   // move locked -> available atomically
   const rows = await prisma.$queryRaw`
-    UPDATE "Wallet" SET "locked" = "locked" - ${String(amount)}, "available" = "available" + ${String(amount)}
-    WHERE "userId" = ${userId} AND "locked" >= ${String(amount)}
+    UPDATE "Wallet" SET "locked" = "locked" - ${amt}::numeric, "available" = "available" + ${amt}::numeric
+    WHERE "userId" = ${userId} AND "locked" >= ${amt}::numeric
     RETURNING *;
   `;
   if (rows.length === 0) {

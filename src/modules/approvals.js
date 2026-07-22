@@ -15,7 +15,7 @@ async function approveRequest({ approverId, requestId, note = null }) {
   if (existing) throw Object.assign(new Error('You have already approved this request'), { status: 400 });
 
   // record approval
-  const approval = await prisma.approval.create({ data: { requestId, approverId, note } });
+  const approval = await prisma.approval.create({ data: { requestId, approverId, note, decision: 'APPROVED' } });
   await logAudit('REQUEST_APPROVED', approverId, { requestId, approvalId: approval.id, note });
 
   // count approvals and compare against threshold
@@ -83,9 +83,10 @@ async function approveRequest({ approverId, requestId, note = null }) {
         }
 
         // debit the sender atomically
+        const numAmount = Number(amount);
         const debitRows = await tx.$queryRaw`
-          UPDATE "Wallet" SET "available" = "available" - ${amount}
-          WHERE "userId" = ${from} AND "available" >= ${amount}
+          UPDATE "Wallet" SET "available" = "available" - ${numAmount}::numeric
+          WHERE "userId" = ${from} AND "available" >= ${numAmount}::numeric
           RETURNING *;
         `;
         if (debitRows.length === 0) throw Object.assign(new Error('Insufficient funds for execution'), { status: 400 });
@@ -93,7 +94,7 @@ async function approveRequest({ approverId, requestId, note = null }) {
 
         // credit the recipient
         const creditRows = await tx.$queryRaw`
-          UPDATE "Wallet" SET "available" = "available" + ${amount}
+          UPDATE "Wallet" SET "available" = "available" + ${numAmount}::numeric
           WHERE "userId" = ${to}
           RETURNING *;
         `;
@@ -157,7 +158,7 @@ async function rejectRequest({ approverId, requestId, note = null }) {
   if (req.proposerId === approverId) throw Object.assign(new Error('Proposer cannot reject their own request'), { status: 403 });
   if (req.status !== 'PENDING') throw Object.assign(new Error('Request not in pending state'), { status: 400 });
 
-  const approval = await prisma.approval.create({ data: { requestId, approverId, note } });
+  const approval = await prisma.approval.create({ data: { requestId, approverId, note, decision: 'REJECTED' } });
   await prisma.request.update({ where: { id: requestId }, data: { status: 'REJECTED' } });
   await logAudit('REQUEST_REJECTED', approverId, { requestId, approvalId: approval.id, note });
   return approval;

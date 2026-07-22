@@ -26,7 +26,7 @@ afterAll(async () => {
     // cleanup approvals, requests, ledger entries, wallets, users, audit
     await prisma.approval.deleteMany({ where: { approverId: { in: [admin1.id, admin2.id, proposer.id] } } });
     await prisma.request.deleteMany({ where: { proposerId: proposer.id } });
-    await prisma.ledgerEntry.deleteMany({ where: { reference: { in: [] } } });
+    await prisma.ledgerEntry.deleteMany({ where: { OR: [{ debitUserId: { in: [payer.id, recipient.id] } }, { creditUserId: { in: [payer.id, recipient.id] } }] } });
     await prisma.wallet.deleteMany({ where: { userId: { in: [payer.id, recipient.id] } } });
     await prisma.auditLog.deleteMany({ where: { initiatorId: { in: [admin1.id, admin2.id, proposer.id] } } });
     await prisma.user.deleteMany({ where: { id: { in: [proposer.id, payer.id, recipient.id, admin1.id, admin2.id] } } });
