@@ -6,21 +6,29 @@
   "scripts": {
     "dev": "nodemon --watch src --exec node src/server.js",
     "start": "node src/server.js",
-    "prisma": "prisma"
+    "prisma": "prisma",
+    "test": "jest --runInBand --forceExit",
+    "test:watch": "jest --watch --runInBand"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testTimeout": 30000
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@prisma/client": "^5.6.0",
     "bcrypt": "^5.1.0",
+    "bullmq": "^1.91.0",
     "express": "^4.18.2",
+    "express-rate-limit": "^7.4.0",
+    "ioredis": "^5.3.2",
     "jsonwebtoken": "^9.0.0",
     "prisma": "^5.6.0",
-    "@prisma/client": "^5.6.0",
-    "ioredis": "^5.3.2",
-    "bullmq": "^1.91.0",
     "uuid": "^9.0.0"
   },
   "devDependencies": {
+    "jest": "^29.7.0",
     "nodemon": "^2.0.22"
   }
 }

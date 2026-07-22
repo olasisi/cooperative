@@ -25,7 +25,7 @@ afterAll(async () => {
   try {
     await prisma.surety.deleteMany({ where: { userId: pledger.id } });
     await prisma.loan.deleteMany({ where: { borrowerId: borrower.id } });
-    await prisma.ledgerEntry.deleteMany({ where: { reference: { in: [] } } });
+    await prisma.ledgerEntry.deleteMany({ where: { OR: [{ debitUserId: { in: [pledger.id, borrower.id] } }, { creditUserId: { in: [pledger.id, borrower.id] } }] } });
     await prisma.wallet.deleteMany({ where: { userId: { in: [pledger.id, borrower.id] } } });
     await prisma.auditLog.deleteMany({ where: { initiatorId: { in: [proposer.id, admin.id] } } });
     await prisma.user.deleteMany({ where: { id: { in: [proposer.id, borrower.id, pledger.id, admin.id] } } });
